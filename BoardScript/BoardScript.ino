@@ -163,9 +163,7 @@ void setup()
     Serial.print(".");
   }
 
-  if (connectClientWithServer() != 1) {
-    //TODO
-  }
+  if (connectClientWithServer() != 1) {}
   Serial.println("Server connected");
 
   ce.connectionClient.path = ss.connectionPath;
@@ -193,8 +191,13 @@ void loop() {
 }
 
 int connectClientWithServer() {
+  int attemtsCount = 0;
   while(!ce.client.connect(ss.host, ss.port)) {
+    if (++attemtsCount == 10) return -1;
+
     Serial.println("Retrying to connect the server");
+    delay(1000);
+
   }
   return 1;
 }
@@ -222,19 +225,24 @@ String getValueFromState(String str, bool isState) {
   else           return state;
 }
 
-int connectToSocketManagement() {
-  Serial.println("Attempt to connect to the socket management");
+void connectToSocketManagement() {
+  Serial.println("Attempt to connect with the socket management");
   ce.client.stop();
+
+  
   if (connectClientWithServer() != 1) {
-    //TODO
+    return;
   }
   Serial.println("Server connected");
-  
+
+  int attemptsCount = 0;
   while(!ce.managementClient.handshake(ce.client)){
+    if (++attemptsCount == 10) return;
+    
     Serial.println("Retrying to get access from the server");
     delay(3000);
   }
-  Serial.println("Access granted");
+  Serial.println("Access to socket management granted");
   String ping = "1";
   String pong = "0";
   String data;
@@ -242,7 +250,10 @@ int connectToSocketManagement() {
   
   while(WiFi.status() == WL_CONNECTED && ce.client.connected()) {
     ce.managementClient.getData(data);
-    if (data != NULL) Serial.println(data);
+    if (data != NULL && data != "Update is null") {
+      if (data == ping) Serial.println("Ping");
+      else              Serial.println(data);
+    }
     
     if (data == "Sending board id accepted") {
       StaticJsonDocument<1024> boardConnectionData;
@@ -250,16 +261,17 @@ int connectToSocketManagement() {
       char output[128];
       serializeJsonPretty(boardConnectionData, output);
       int res = sendJsonObject(output, true, ce.managementClient);
-      if (!trackSendingStatusJO(res)) return -1;
+      if (!trackSendingStatusJO(res)) return;
       else                            Serial.println("ACCEPTED"); 
       ce.managementClient.sendData("update");              
     }
-    else if (data == "Board id was not found")                      return -1;
-    else if (data == "Update is null")                              ce.managementClient.sendData("update");
-    else if (data == "Such board UUID is not exists")               return -1;
     else if (data == ping)                                          ce.managementClient.sendData(pong);
-    else if (data == "Command is unknown")                          return -1;
-    else if (data == "Socket timeout response")                     return -1;
+    else if (data == "Update is null")                              ce.managementClient.sendData("update");
+    else if (data == "Board id was not found")                      return;
+    else if (data == "Such board UUID is not exists")               return;
+    else if (data == "Command is unknown")                          return;
+    else if (data == "Socket timeout response")                     return;
+    else if (data == "Such board is listening")                     return;
     else {
       if (data != NULL) {
         String sensor = getValueFromState(data, false);
@@ -411,18 +423,21 @@ int sendSettingsToSocket() {
 
 //1-such board already exists, 0 - successfully connection, -1 - fatal exception
 int socketConnect() {
+  int attemptsCount = 0;
   while(!ce.connectionClient.handshake(ce.client)){
+    if (++attemptsCount == 10) return -1;
+    
     Serial.println("Retrying to get access from the server");
     delay(3000);
   }
-  Serial.println("Access granted");
+  Serial.println("Access granted to board connection.");
   
   String data;
   ce.connectionClient.sendData("connect");
   
   while(WiFi.status() == WL_CONNECTED && ce.client.connected()) {
     ce.connectionClient.getData(data);
-    if (data != NULL) Serial.println(data);
+    if (data != NULL && data != "Searching the client") Serial.println(data);
     
     if (data == "Sending board id accepted") {
       StaticJsonDocument<1024> boardConnectionData;
