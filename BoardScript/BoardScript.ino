@@ -246,7 +246,7 @@ void connectToSocketManagement() {
   String ping = "1";
   String pong = "0";
   String data;
-  
+  ce.managementClient.sendData("connect");
   
   while(WiFi.status() == WL_CONNECTED && ce.client.connected()) {
     ce.managementClient.getData(data);
@@ -282,6 +282,7 @@ void connectToSocketManagement() {
     }  
     delay(500); 
   }
+  Serial.println("The connection was lost");
 }
 
 void changeDeviceSettings(String sensor, String state) {
