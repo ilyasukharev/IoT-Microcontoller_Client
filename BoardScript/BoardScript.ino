@@ -4,8 +4,8 @@
 #include <Ticker.h>
 
 #define boardId "54fdcf80-a2e9-11ed-a8fc-0242ac120002"
-#define wifiLOGIN "lolita"
-#define wifiPWD "cardigan92"
+#define wifiLOGIN ""
+#define wifiPWD ""
 #define failedDelayTime 100000
 
 #define led D8
