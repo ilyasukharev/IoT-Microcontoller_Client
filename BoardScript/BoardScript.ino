@@ -4,8 +4,9 @@
 #include <Ticker.h>
 
 #define boardId "54fdcf80-a2e9-11ed-a8fc-0242ac120002"
-#define wifiLOGIN ""
-#define wifiPWD ""
+#define wifiLOGIN "lolita"
+#define wifiPWD "cardigan92"
+#define failedDelayTime 100000
 
 #define led D8
 #define photoRelay D7
@@ -89,8 +90,9 @@ void getPhotoRelayMeasure() {
       middle /= ar.buffSize;
 
       Serial.println("Среднее: ");
-      Serial.print(middle);
+      Serial.println(middle);
       Serial.println();
+      
       if(middle > 512) {
         Serial.println("МОТОР ДОЛЖЕН ПОЕХАТЬ ВНИЗ");
         ar.isMotorEnabled = true;
@@ -149,14 +151,13 @@ void setupAllTickers() {
 void setup()
 {
   Serial.begin(9600);
-  Serial.println();
   
   setupAllDeviceSensors();
   setupAllTickers();
   
   WiFi.begin(wifiLOGIN, wifiPWD);
 
-  Serial.print("Connecting Wifi");
+  Serial.print("\nConnecting Wifi");
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
@@ -177,17 +178,18 @@ void setup()
 
 void loop() { 
   int res = socketConnect();
-  if (res == -1)  delay(1000000000);
+  if (res == -1)  delay(failedDelayTime);
   else if (res == 0) {
-    delay(5000);
+    delay(3000);
     res = sendSettingsToSocket();
     if (res == -1) {
       Serial.println("Failed sending settings");
-      delay(1000000000);
+      delay(failedDelayTime);
     }
   }
   delay(5000);
   connectToSocketManagement();
+  ESP.restart();
 }
 
 int connectClientWithServer() {
@@ -202,27 +204,28 @@ int connectClientWithServer() {
   return 1;
 }
 
-String getValueFromState(String str, bool isState) {
+String getValueFromUpdate(String str, bool isState) {
   char buff[str.length() + 1];
   str.toCharArray(buff, str.length() + 1);
   
-  String sensor = "";
-  String state = "";
-  bool isSensor = true;
+  String result = "";
+  boolean isFirstHalf = true;
   
   for (int i = 0; i <= str.length(); i++) {
-    if (buff[i] != NULL) {
-      if (buff[i] == ':') {
-        isSensor = false;
-        continue;
-      }
-      if (isSensor)   sensor += buff[i];
-      if (!isSensor)  state += buff[i]; 
+    if (buff[i] == NULL) break;
+   
+    if (buff[i] == ':') {
+      isFirstHalf = false;
+      continue;
     }
+
+    if (isFirstHalf && isState) continue;
+    if (!isFirstHalf &&!isState) continue;
+
+    result += buff[i];
   }
 
-  if (!isState)  return sensor;
-  else           return state;
+  return result;
 }
 
 void connectToSocketManagement() {
@@ -250,6 +253,7 @@ void connectToSocketManagement() {
   
   while(WiFi.status() == WL_CONNECTED && ce.client.connected()) {
     ce.managementClient.getData(data);
+    delay(500); 
     if (data != NULL && data != "Update is null") {
       if (data == ping) Serial.println("Ping");
       else              Serial.println(data);
@@ -262,25 +266,26 @@ void connectToSocketManagement() {
       serializeJsonPretty(boardConnectionData, output);
       int res = sendJsonObject(output, true, ce.managementClient);
       if (!trackSendingStatusJO(res)) return;
-      else                            Serial.println("ACCEPTED"); 
-      ce.managementClient.sendData("update");              
+      else                            Serial.println("ACCEPTED");          
     }
     else if (data == ping)                                          ce.managementClient.sendData(pong);
     else if (data == "Update is null")                              ce.managementClient.sendData("update");
+    else if (data == "Device was submitted")                        ce.managementClient.sendData("update");
     else if (data == "Board id was not found")                      return;
     else if (data == "Such board UUID is not exists")               return;
     else if (data == "Command is unknown")                          return;
     else if (data == "Socket timeout response")                     return;
+    else if (data == "Device was declined")                         return;
     else if (data == "Such board is listening")                     return;
     else {
       if (data != NULL) {
-        String sensor = getValueFromState(data, false);
-        String state = getValueFromState(data, true);
+        String sensor = getValueFromUpdate(data, false);
+        String state = getValueFromUpdate(data, true);
         changeDeviceSettings(sensor, state);
         ce.managementClient.sendData("update");
       }
-    }  
-    delay(500); 
+    }
+    delay(500);   
   }
   Serial.println("The connection was lost");
 }
@@ -292,17 +297,11 @@ void changeDeviceSettings(String sensor, String state) {
     
     if (state == "true") {
         Serial.println("Мотор вверх включен");
-        if (digitalRead(motorEnable) == HIGH) {
-          digitalWrite(motorEnable, LOW);
-        }
-        digitalWrite(motorEnable, HIGH);
+        if (digitalRead(motorEnable) == LOW) digitalWrite(motorEnable, HIGH);
         digitalWrite(motorSide, HIGH);
       } else {
         Serial.println("Мотор вверх выключен");
-        if (digitalRead(motorEnable) == HIGH) {
-          digitalWrite(motorEnable, LOW);
-        }
-        digitalWrite(motorEnable, LOW);
+        if (digitalRead(motorEnable) == HIGH) digitalWrite(motorEnable, LOW);
       }
   }
   else if (sensor == "Мотор вниз") {
@@ -313,7 +312,7 @@ void changeDeviceSettings(String sensor, String state) {
       digitalWrite(motorEnable, HIGH);
       digitalWrite(motorSide, LOW);
     } else {
-      digitalWrite(motorEnable, LOW);
+      if (digitalRead(motorEnable) == HIGH) digitalWrite(motorEnable, LOW);
     }
   }
   else if (sensor == "Автоматический режим") {
@@ -365,9 +364,9 @@ int sendSettingsToSocket() {
 
   while(WiFi.status() == WL_CONNECTED && ce.client.connected()) {
     ce.connectionClient.getData(data);
+    if (data != NULL) Serial.println(data);
     
     if (data == "Sending board id accepted") {
-      Serial.println(data);
       StaticJsonDocument<1024> boardConnectionData;
       boardConnectionData["boardIdentificationData"].set(ce.boardIdentificationData);
       char output[128];
@@ -375,16 +374,9 @@ int sendSettingsToSocket() {
       int res = sendJsonObject(output, true, ce.connectionClient);
       if (!trackSendingStatusJO(res)) return -1;
     }
-    else if (data == "Authorization board error") {
-      Serial.println(data);
-      return -1;
-    }
-    else if (data == "User id was not found") {
-      Serial.println(data);
-      return -1;
-    }
+    else if (data == "Authorization board error") return -1;
+    else if (data == "User id was not found")     return -1;
     else if (data == "Sending settings accepted") {
-      Serial.println(data);
       StaticJsonDocument<1024> boardConnectionData;
       boardConnectionData["controlDeviceData"].set(ce.controlDeviceData);
       char output[1024];
@@ -393,31 +385,13 @@ int sendSettingsToSocket() {
       if (!trackSendingStatusJO(res)) return -1;
       delay(1000);
     }
-    else if (data == "Integrity objects violation") {
-      Serial.println(data);
-      return -1;
-    }
-    else if (data == "Device has not been added") {
-      Serial.println(data);
-      return -1;
-    }
-    else if (data == "Device id was not found") {
-      Serial.println(data);
-      return -1;
-    }
-    else if (data == "Such device id already registered") {
-      Serial.println(data);
-      return 1;
-    }
-    else if (data == "Device has not been added to user base") {
-      Serial.println(data);
-      return -1;
-    }
-    else if (data == "Data were successfully wrote") {
-      Serial.println(data);
-      return 1;
-    }
-
+    else if (data == "Integrity objects violation")             return -1;
+    else if (data == "Device has not been added")               return -1;
+    else if (data == "Device id was not found")                 return -1;
+    else if (data == "Such device id already registered")       return 1;
+    else if (data == "Device has not been added to user base")  return -1;
+    else if (data == "Data were successfully wrote")            return 1;
+    
     delay(1000);
   }
 }
